@@ -125,23 +125,31 @@ Write-Info "Downloading $fileName..."
 
 $tmpFile = Join-Path $env:TEMP "kiroku-install-$([guid]::NewGuid().ToString('N').Substring(0,8)).exe"
 try {
-    # Use gh CLI for reliable LFS download (handles auth + redirects)
-    if (Get-Command gh -ErrorAction SilentlyContinue) {
-        $lfsDir = Join-Path $env:TEMP "kiroku-lfs-$([guid]::NewGuid().ToString('N').Substring(0,8))"
-        Write-Info "Cloning binary via git LFS..."
-        git clone --depth 1 --filter=blob:none --sparse "https://x-access-token:${token}@github.com/$GITHUB_SOURCE_REPO.git" $lfsDir 2>$null
-        Push-Location $lfsDir
-        git sparse-checkout set "assets/kiroku/$fileName" 2>$null
-        git lfs pull --include="assets/kiroku/$fileName" 2>$null
-        Pop-Location
-        if (Test-Path "$lfsDir/assets/kiroku/$fileName") {
-            Copy-Item "$lfsDir/assets/kiroku/$fileName" $tmpFile -Force
+    # Try git LFS clone first (fastest for large files)
+    if ((Get-Command git -ErrorAction SilentlyContinue) -and (Get-Command git-lfs -ErrorAction SilentlyContinue)) {
+        try {
+            $lfsDir = Join-Path $env:TEMP "kiroku-lfs-$([guid]::NewGuid().ToString('N').Substring(0,8))"
+            Write-Info "Cloning binary via git LFS..."
+            $env:GIT_TERMINAL_PROMPT = "0"
+            & git clone --depth 1 --filter=blob:none --sparse "https://x-access-token:${token}@github.com/$GITHUB_SOURCE_REPO.git" $lfsDir 2>$null
+            if ($LASTEXITCODE -eq 0) {
+                Push-Location $lfsDir
+                & git sparse-checkout set "assets/kiroku/$fileName" 2>$null
+                & git lfs pull --include="assets/kiroku/$fileName" 2>$null
+                Pop-Location
+                if (Test-Path "$lfsDir/assets/kiroku/$fileName") {
+                    Copy-Item "$lfsDir/assets/kiroku/$fileName" $tmpFile -Force
+                }
+            }
+            Remove-Item $lfsDir -Recurse -Force -ErrorAction SilentlyContinue
+        } catch {
+            Write-Info "Git LFS clone failed, trying fallback..."
         }
-        Remove-Item $lfsDir -Recurse -Force -ErrorAction SilentlyContinue
     }
 
     # Fallback: download_url from contents API
     if (-not (Test-Path $tmpFile) -or (Get-Item $tmpFile).Length -lt 1000000) {
+        Write-Info "Downloading via GitHub API..."
         $dlInfoUrl = "https://api.github.com/repos/$GITHUB_SOURCE_REPO/contents/assets/kiroku/${fileName}?ref=$GITHUB_SOURCE_BRANCH"
         $fileInfo = Invoke-RestMethod $dlInfoUrl -Headers @{ Authorization = "token $token"; Accept = "application/vnd.github+json" } -UseBasicParsing
         if ($fileInfo.download_url) {
