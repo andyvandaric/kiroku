@@ -88,8 +88,8 @@ Installer otomatis:
 ## After Install
 
 ```bash
-# Import akun dari kiro-cli
-kiroku account import
+# Login akun (ulangi untuk setiap akun tambahan)
+kiroku login
 
 # Lihat pool
 kiroku account list
